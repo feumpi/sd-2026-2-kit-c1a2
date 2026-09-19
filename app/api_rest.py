@@ -17,6 +17,7 @@ import time
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
+from app import fila
 from app.modelo import carregar_modelo
 
 app = FastAPI(title="Servico de Inferencia - C1.A2", version="0.1.0")
@@ -26,6 +27,12 @@ modelo = None
 
 class Entrada(BaseModel):
     texto: str
+
+
+class RespostaSubmissao(BaseModel):
+    id: str
+    status: str = "na_fila"
+
 
 
 @app.on_event("startup")
@@ -56,11 +63,17 @@ def predict_sync(entrada: Entrada):
 # ------------------------------------------------------------------
 # TAREFA 1 - submissao assincrona
 # ------------------------------------------------------------------
-# @app.post("/predict", status_code=202)
-# def predict(entrada: Entrada):
-#     """Deve enfileirar a tarefa e devolver {"id": ...} SEM esperar."""
-#     # DICA: use app.fila.enfileirar(entrada.texto)
-#     raise NotImplementedError("implemente a submissao assincrona")
+@app.post("/predict", status_code=202, response_model=RespostaSubmissao)
+def predict(entrada: Entrada):
+    """Deve enfileirar a tarefa e devolver {"id": ...} SEM esperar."""
+    if not entrada.texto.strip():
+        raise HTTPException(status_code=400, detail="texto vazio")
+
+    inicio = time.time()
+    tarefa_id = fila.enfileirar(entrada.texto)
+    tempo_ms = round((time.time() - inicio) * 1000, 2)
+    print(f"[rest] POST /predict id={tarefa_id} tamanho={len(entrada.texto)} tempo_ms={tempo_ms}")
+    return RespostaSubmissao(id=tarefa_id, status="na_fila")
 
 
 # ------------------------------------------------------------------
