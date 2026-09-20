@@ -6,13 +6,16 @@ Conceito da Aula 8: quem pede nao espera; um worker processa depois.
 """
 import json
 import os
+import time
 import uuid
 
 import redis
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 FILA_TAREFAS = "tarefas"
+FILA_DEAD_LETTER = "tarefas:dead_letter"
 PREFIXO_RESULTADO = "resultado:"
+MAX_TENTATIVAS = 3
 
 _cliente = None
 
@@ -27,10 +30,14 @@ def cliente():
 def enfileirar(texto: str) -> str:
     """Coloca uma tarefa na fila e devolve o id para consulta posterior."""
     tarefa_id = str(uuid.uuid4())
-    cliente().rpush(FILA_TAREFAS, json.dumps({"id": tarefa_id, "texto": texto}))
+    cliente().rpush(
+        FILA_TAREFAS,
+        json.dumps({"id": tarefa_id, "texto": texto, "tentativas": 1}),
+    )
     cliente().set(PREFIXO_RESULTADO + tarefa_id,
                   json.dumps({"status": "na_fila"}))
     return tarefa_id
+
 
 
 def proxima_tarefa(timeout: int = 5):
@@ -48,3 +55,31 @@ def guardar_resultado(tarefa_id: str, resultado: dict) -> None:
 def buscar_resultado(tarefa_id: str):
     bruto = cliente().get(PREFIXO_RESULTADO + tarefa_id)
     return json.loads(bruto) if bruto else None
+
+
+def reenfileirar(tarefa: dict) -> None:
+    """Reenfileira a tarefa na fila principal e atualiza status para retentando."""
+    cliente().rpush(FILA_TAREFAS, json.dumps(tarefa))
+    cliente().set(
+        PREFIXO_RESULTADO + tarefa["id"],
+        json.dumps({"status": "retentando", "tentativas": tarefa.get("tentativas", 1)}),
+    )
+
+
+def enfileirar_dead_letter(tarefa: dict, erro: str) -> None:
+    """Envia tarefa com falha persistente para dead-letter e grava status de erro."""
+    dados_dl = {
+        "tarefa": tarefa,
+        "erro": erro,
+        "timestamp": time.time(),
+    }
+    cliente().rpush(FILA_DEAD_LETTER, json.dumps(dados_dl))
+    guardar_resultado(
+        tarefa["id"],
+        {
+            "status": "erro",
+            "detalhes": erro,
+            "tentativas": tarefa.get("tentativas", MAX_TENTATIVAS),
+        },
+    )
+

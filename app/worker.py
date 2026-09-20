@@ -30,6 +30,25 @@ def processar_tarefa(tarefa: dict, modelo) -> dict:
     return resultado
 
 
+def tratar_falha(tarefa: dict, erro: Exception) -> None:
+    """Aplica política de retentativa e encaminhamento para dead-letter."""
+    tentativa_atual = tarefa.get("tentativas", 1)
+
+    if tentativa_atual < fila.MAX_TENTATIVAS:
+        tarefa["tentativas"] = tentativa_atual + 1
+        print(
+            f"[worker] AVISO: falha ao processar {tarefa.get('id')} "
+            f"(tentativa {tentativa_atual}/{fila.MAX_TENTATIVAS}): {erro}. Reenfileirando..."
+        )
+        fila.reenfileirar(tarefa)
+    else:
+        print(
+            f"[worker] ERRO CRÍTICO: tarefa {tarefa.get('id')} atingiu o limite de "
+            f"{fila.MAX_TENTATIVAS} tentativas. Despachando para dead-letter: {erro}"
+        )
+        fila.enfileirar_dead_letter(tarefa, str(erro))
+
+
 def main():
     print("[worker] carregando modelo...")
     modelo = carregar_modelo()
@@ -44,8 +63,7 @@ def main():
         try:
             processar_tarefa(tarefa, modelo)
         except Exception as erro:  # noqa: BLE001
-            # TAREFA 5: retentativa + dead-letter em vez de so registrar.
-            print(f"[worker] ERRO em {tarefa['id']}: {erro}")
+            tratar_falha(tarefa, erro)
 
 
 if __name__ == "__main__":
