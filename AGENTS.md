@@ -30,8 +30,8 @@ O sistema resolve o problema de **desacoplamento temporal** e **evitação de bl
 ```mermaid
 flowchart TD
     subgraph Clientes
-        C_REST[Cliente HTTP / Web / Swagger]
-        C_GRPC[Cliente gRPC]
+        C_REST["Cliente HTTP / Web / Swagger"]
+        C_GRPC["Cliente gRPC"]
     end
 
     subgraph "Camada de Comunicação"
@@ -55,27 +55,27 @@ flowchart TD
     end
 
     %% Fluxos Síncronos
-    C_REST -->|POST /predict-sync| API
-    API -->|Inferência Direta| MODELO
-    C_GRPC -->|Prever / PreverLote| GRPC
-    GRPC -->|Inferência Direta| MODELO
+    C_REST -->|"POST /predict-sync"| API
+    API -->|"Inferência Direta"| MODELO
+    C_GRPC -->|"Prever / PreverLote"| GRPC
+    GRPC -->|"Inferência Direta"| MODELO
 
     %% Fluxo Assíncrono REST
-    C_REST -->|POST /predict (202 Accepted)| API
-    API -->|enfileirar id + texto| FILA
-    API -.->|status inicial 'na_fila'| KV
-    C_REST -->|GET /resultado/:id| API
-    API -->|buscar resultado| KV
+    C_REST -->|"POST /predict - 202 Accepted"| API
+    API -->|"enfileirar id + texto"| FILA
+    API -.->|"status inicial 'na_fila'"| KV
+    C_REST -->|"GET /resultado/:id"| API
+    API -->|"buscar resultado"| KV
 
     %% Worker Consumption
-    FILA -->|BLPOP| W1
-    FILA -->|BLPOP| W2
-    W1 -->|Inferência| MODELO
-    W2 -->|Inferência| MODELO
-    W1 -->|guardar status 'pronto'| KV
-    W2 -->|guardar status 'pronto'| KV
-    W1 -.->|falha após 3 tentativas| DEAD
-    W2 -.->|falha após 3 tentativas| DEAD
+    FILA -->|"BLPOP"| W1
+    FILA -->|"BLPOP"| W2
+    W1 -->|"Inferência"| MODELO
+    W2 -->|"Inferência"| MODELO
+    W1 -->|"guardar status 'pronto'"| KV
+    W2 -->|"guardar status 'pronto'"| KV
+    W1 -.->|"falha após 3 tentativas"| DEAD
+    W2 -.->|"falha após 3 tentativas"| DEAD
 ```
 
 ---

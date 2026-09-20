@@ -1,123 +1,426 @@
-# Kit de Partida — C1.A2: Serviço de Inferência Distribuído
+# Serviço de Inferência Distribuído (C1.A2)
 
-**Sistemas Distribuídos e Computação em Nuvem · FAESA · 2026/2**
-Prof. Howard Cruz Roatti · Lançado na Aula 6 (10/09) · Entrega na Aula 7 (17/09)
+**Sistemas Distribuídos e Computação em Nuvem · FAESA Centro Universitário (2026/2)**  
+**Professor:** Prof. M.Sc. Howard Cruz Roatti
+**Aluno**: Felipe Pereira Umpierre (23110554)  
 
----
-
-## O que é isto
-
-Um serviço que recebe um texto, executa uma inferência de IA e devolve o resultado.
-O desafio **não é a IA** (o modelo já vem pronto), e sim expor esse serviço por **duas
-tecnologias de comunicação** (REST e gRPC) e **não deixar o cliente esperando** — usando fila.
-
-> **Sobre a IA neste trabalho:** todo contato com inteligência artificial aqui é
-> **chamada de biblioteca ou de API**. Você **não vai treinar modelos** nem precisar de
-> matemática de aprendizado de máquina. O modelo já vem pronto e configurado.
-> A sua nota vem da **engenharia distribuída**: arquitetura, comunicação, resiliência e
-> execução reproduzível — a sofisticação do modelo **não pontua**.
+**Trabalho C1.A2:** Avaliação Prática de Engenharia Distribuída (5,0 pontos)
 
 ---
 
-## Como começar
+## 1. Visão Geral do Projeto
 
+Este projeto implementa uma plataforma de inferência de Inteligência Artificial orientada a serviços distribuídos. O foco central do trabalho **não é a complexidade do modelo de IA** (que consiste em um classificador de sentimento scikit-learn treinado e executado 100% offline), mas sim a **Engenharia de Sistemas Distribuídos**:
+- **Desacoplamento Temporal e Espacial:** O cliente não fica bloqueado aguardando inferências síncronas pesadas; requisições são enfileiradas e processadas de forma assíncrona por *workers*.
+- **Comunicação Poliglota (REST e gRPC):** Exposição do serviço via HTTP/JSON documentado (FastAPI) e via RPC binário sobre HTTP/2 com Protocol Buffers (gRPC), com estrita paridade de resultados.
+- **Tolerância a Falhas e Resiliência:** Mecanismos de retentativas automáticas e isolamento de mensagens corrompidas (*poison pills*) em uma fila de descarte (*dead-letter queue*).
+- **Observabilidade Estruturada:** Registro de logs com identificador único, tamanho da entrada, códigos de status e tempo de resposta em milissegundos.
+
+---
+
+## 2. Arquitetura do Sistema e Decisões de Projeto
+
+```mermaid
+flowchart TD
+    subgraph Clientes
+        C_REST["Cliente HTTP / Web / Swagger"]
+        C_GRPC["Cliente gRPC"]
+    end
+
+    subgraph "Camada de Comunicação"
+        API["API REST (FastAPI)\n:8000\napp/api_rest.py"]
+        GRPC["Servidor gRPC\n:50051\napp/servidor_grpc.py"]
+    end
+
+    subgraph "Mensageria e Estado (Redis :6379)"
+        FILA[("Fila de Tarefas\n'tarefas' (RPUSH / BLPOP)")]
+        DEAD[("Dead-Letter Queue\n'tarefas:dead_letter'")]
+        KV[("Armazenamento de Resultados\n'resultado:<id>'")]
+    end
+
+    subgraph "Camada de Processamento Assíncrono"
+        W1["Worker 1\napp/worker.py"]
+        W2["Worker N (Escala Horizontal)\napp/worker.py"]
+    end
+
+    subgraph "Núcleo de IA (Offline)"
+        MODELO["ModeloSentimento\napp/modelo.py\n(TF-IDF + LogisticRegression)"]
+    end
+
+    %% Fluxos Síncronos
+    C_REST -->|"POST /predict-sync"| API
+    API -->|"Inferência Direta"| MODELO
+    C_GRPC -->|"Prever / PreverLote"| GRPC
+    GRPC -->|"Inferência Direta"| MODELO
+
+    %% Fluxo Assíncrono REST
+    C_REST -->|"POST /predict - 202 Accepted"| API
+    API -->|"enfileirar id + texto"| FILA
+    API -.->|"status inicial 'na_fila'"| KV
+    C_REST -->|"GET /resultado/:id"| API
+    API -->|"buscar resultado"| KV
+
+    %% Consumo dos Workers
+    FILA -->|"BLPOP"| W1
+    FILA -->|"BLPOP"| W2
+    W1 -->|"Inferência"| MODELO
+    W2 -->|"Inferência"| MODELO
+    W1 -->|"guardar status 'pronto'"| KV
+    W2 -->|"guardar status 'pronto'"| KV
+    W1 -.->|"falha após 3 tentativas"| DEAD
+    W2 -.->|"falha após 3 tentativas"| DEAD
+```
+
+### Decisões Arquiteturais Fundamentadas:
+1. **Desacoplamento Produtor-Consumidor:** Utilização do Redis como Message-Oriented Middleware (MOM). O comando `RPUSH` na API e `BLPOP` nos workers garante consumo ordenado (*FIFO*) e atômico, eliminando condições de corrida entre múltiplos workers concorrentes.
+2. **Ciclo de Vida e Evitação de *Cold Start*:** O modelo de IA é carregado em memória **uma única vez** na inicialização de cada processo (`startup` do FastAPI, inicialização do Worker e `__init__` do Servicer gRPC). Jamais carrega o arquivo do modelo por requisição.
+3. **Idempotência:** A rota de consulta `GET /resultado/{id}` é idempotente e segura, podendo ser consultada em *polling* repetidamente sem alterar o estado do sistema. Já a rota `POST /predict` é não-idempotente, gerando um novo UUID a cada submissão.
+4. **Semântica de Retentativa e Dead-Letter:** Tarefas com falha transitória são reenfileiradas até 3 tentativas. Ao atingir o limite, a tarefa é isolada em `tarefas:dead_letter` e o cliente recebe o status `"erro"`, evitando que falhas travem o consumidor em *loop* infinito.
+5. **Paridade Estrita REST e gRPC:** As duas tecnologias compartilham a mesma instância do classificador scikit-learn, garantindo predições matematicamente idênticas para a mesma entrada.
+
+---
+
+## 3. Pré-requisitos
+
+- **Python:** 3.10 ou superior.
+- **Docker e Docker Compose:** Para execução do container Redis.
+- **Git:** Para clonagem e versionamento.
+
+---
+
+## 4. Como Executar o Projeto do Zero
+
+Siga os passos abaixo sequencialmente em terminais distintos:
+
+### Passo 1: Clonar o Repositório e Criar o Ambiente Virtual
 ```bash
-# 1. Clone o kit e entre na pasta
 git clone https://github.com/howardroatti/sd-2026-2-kit-c1a2.git
 cd sd-2026-2-kit-c1a2
 
-# 2. Crie e ative o ambiente virtual
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
+# Criação do ambiente virtual
+python3 -m venv .venv
 
-# 3. Instale as dependências
+# Ativação do ambiente:
+# No Linux/macOS:
+source .venv/bin/activate
+# No Windows:
+# .venv\Scripts\activate
+```
+
+### Passo 2: Instalar as Dependências
+```bash
 pip install -r requirements.txt
 ```
 
+### Passo 3: Iniciar o Broker de Mensageria (Redis)
+Em um terminal (ou em segundo plano via `-d`):
 ```bash
-# 4. Suba a fila (Redis) em outro terminal
 docker compose up -d
+# Verificar se o container está saudável:
+docker compose ps
+```
 
-# 5. Rode o serviço REST
-uvicorn app.api_rest:app --reload --port 8000
-# abra http://localhost:8000/docs
-
-# 6. Em outro terminal, rode o worker
-python -m app.worker
-
-# 7. Teste o exemplo pronto (rota síncrona)
-python exemplos/cliente_rest.py "o atendimento foi otimo"
-
-# 8. Para o gRPC, gere os stubs antes
+### Passo 4: Gerar os Stubs gRPC a partir do Contrato Protocol Buffers
+Compile o contrato `proto/inferencia.proto`:
+```bash
 python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. proto/inferencia.proto
-python -m app.servidor_grpc
+```
+*(Alternativamente, execute `bash scripts/gerar_stubs.sh` no Linux/macOS ou `powershell scripts/gerar_stubs.ps1` no Windows).*
+
+### Passo 5: Iniciar os Serviços
+
+Abra terminais com o ambiente virtual ativado (`source .venv/bin/activate`):
+
+- **Terminal 1 — API REST (FastAPI):**
+  ```bash
+  uvicorn app.api_rest:app --port 8000 --reload
+  ```
+  *Swagger UI interativo disponível em: [http://localhost:8000/docs](http://localhost:8000/docs)*
+
+- **Terminal 2 — Worker de Processamento Assíncrono:**
+  ```bash
+  python -m app.worker
+  ```
+  *(Opcional: Abra um segundo terminal e execute o mesmo comando para subir múltiplos workers e observar a divisão de carga).*
+
+- **Terminal 3 — Servidor gRPC:**
+  ```bash
+  python -m app.servidor_grpc
+  ```
+  *Servidor gRPC ativo escutando na porta `50051`.*
+
+---
+
+## 5. Catálogo de Rotas e Exemplos de Uso (REST)
+
+### 5.1. Verificação de Saúde (`GET /saude`)
+- **Descrição:** Informa a disponibilidade do serviço e se o modelo ML já foi carregado na memória.
+- **Chamada:**
+  ```bash
+  curl -s http://localhost:8000/saude
+  ```
+- **Retorno Esperado (`200 OK`):**
+  ```json
+  {
+    "status": "ok",
+    "modelo_carregado": true
+  }
+  ```
+
+---
+
+### 5.2. Inferência Síncrona (`POST /predict-sync`)
+- **Descrição:** Realiza a inferência diretamente na requisição HTTP, bloqueando o cliente até a resposta (rota de referência didática).
+- **Entrada (Payload JSON):**
+  ```json
+  {
+    "texto": "o produto e incrivel e a entrega foi muito rapida"
+  }
+  ```
+- **Chamada:**
+  ```bash
+  curl -s -X POST http://localhost:8000/predict-sync \
+    -H "Content-Type: application/json" \
+    -d '{"texto": "o produto e incrivel e a entrega foi muito rapida"}'
+  ```
+- **Retornos Possíveis:**
+  - **`200 OK`:**
+    ```json
+    {
+      "texto": "o produto e incrivel e a entrega foi muito rapida",
+      "sentimento": "positivo",
+      "confianca": 0.9842,
+      "tempo_ms": 1.25
+    }
+    ```
+  - **`400 Bad Request`** (quando `texto` for vazio ou apenas espaços):
+    ```json
+    {
+      "detail": "texto vazio"
+    }
+    ```
+
+---
+
+### 5.3. Submissão Assíncrona (`POST /predict`) — [Tarefa 1]
+- **Descrição:** Valida a entrada e coloca a tarefa na fila Redis. Retorna **imediatamente** com o identificador da tarefa sem executar o modelo de IA.
+- **Entrada (Payload JSON):**
+  ```json
+  {
+    "texto": "pessimo atendimento, ninguem resolve nada"
+  }
+  ```
+- **Chamada:**
+  ```bash
+  curl -i -X POST http://localhost:8000/predict \
+    -H "Content-Type: application/json" \
+    -d '{"texto": "pessimo atendimento, ninguem resolve nada"}'
+  ```
+- **Retornos Possíveis:**
+  - **`202 Accepted`** (Sucesso na submissão):
+    ```json
+    {
+      "id": "e7b1a234-5678-4321-abcd-ef0123456789",
+      "status": "na_fila"
+    }
+    ```
+  - **`400 Bad Request`** (Texto inválido):
+    ```json
+    {
+      "detail": "texto vazio"
+    }
+    ```
+
+---
+
+### 5.4. Consulta de Resultado (`GET /resultado/{tarefa_id}`) — [Tarefa 2]
+- **Descrição:** Consulta o status atual de uma tarefa previamente submetida pelo seu identificador UUID.
+- **Chamada:**
+  ```bash
+  curl -i http://localhost:8000/resultado/e7b1a234-5678-4321-abcd-ef0123456789
+  ```
+- **Retornos Possíveis:**
+  - **`200 OK` — Concluído pelo Worker (Pronto):**
+    ```json
+    {
+      "texto": "pessimo atendimento, ninguem resolve nada",
+      "sentimento": "negativo",
+      "confianca": 0.9915,
+      "status": "pronto",
+      "tempo_ms": 2.45
+    }
+    ```
+  - **`200 OK` — Aguardando Worker:**
+    ```json
+    {
+      "status": "na_fila"
+    }
+    ```
+  - **`200 OK` — Em Retentativa após falha:**
+    ```json
+    {
+      "status": "retentando",
+      "tentativas": 2
+    }
+    ```
+  - **`200 OK` — Descartado na Dead-Letter após 3 tentativas:**
+    ```json
+    {
+      "status": "erro",
+      "detalhes": "Descricao do erro",
+      "tentativas": 3
+    }
+    ```
+  - **`404 Not Found`** (ID inexistente):
+    ```json
+    {
+      "detail": "Tarefa não encontrada"
+    }
+    ```
+
+---
+
+### 5.5. Execução do Script de Teste REST
+O repositório inclui um script demonstrativo que executa chamadas síncronas e assíncronas em sequência:
+```bash
+python exemplos/cliente_rest.py "o atendimento foi excelente e muito rapido"
 ```
 
 ---
 
-## Estrutura do projeto
+## 6. Interface gRPC e Chamadas em Lote — [Tarefa 4]
+
+O serviço gRPC opera sob o contrato definido em [`proto/inferencia.proto`](proto/inferencia.proto) na porta `50051`.
+
+### 6.1. Métodos Disponíveis no Contrato:
+1. **`Prever (PedidoPrever) returns (RespostaPrever)`:**
+   - **Entrada (`PedidoPrever`):** `string texto = 1;`
+   - **Saída (`RespostaPrever`):** `string texto = 1; string sentimento = 2; double confianca = 3;`
+2. **`PreverLote (PedidoLote) returns (RespostaLote)`:**
+   - **Entrada (`PedidoLote`):** `repeated string textos = 1;`
+   - **Saída (`RespostaLote`):** `repeated RespostaPrever resultados = 1;`
+
+### 6.2. Testando com o Cliente gRPC Demonstrativo
+Com o servidor gRPC em execução, execute:
+```bash
+python exemplos/cliente_grpc.py
+```
+**Saída Esperada:**
+```text
+=== Teste Chamada Individual (Prever) ===
+[grpc] Prever: texto='o atendimento foi muito bom' | sentimento=positivo | confianca=0.9854
+
+=== Teste Chamada em Lote (PreverLote) ===
+[grpc] PreverLote (3 itens processados):
+  -> texto='adorei o produto, recomendo demais' | sentimento=positivo | confianca=0.9942
+  -> texto='pessimo atendimento, ninguem resolve nada' | sentimento=negativo | confianca=0.9915
+  -> texto='entrega super rapida e bem embalada' | sentimento=positivo | confianca=0.9781
+```
+
+---
+
+## 7. Resiliência, Retentativas e Dead-Letter Queue — [Tarefa 5]
+
+O sistema protege a fila principal contra tarefas que geram exceções (*poison pills*):
+1. **Tentativas 1 e 2:** Ao capturar uma exceção durante o processamento, o worker incrementa `tarefa["tentativas"]`, loga um aviso (`WARNING`) e aciona `fila.reenfileirar(tarefa)`. O status no Redis passa a ser `"retentando"`.
+2. **Tentativa 3:** Caso a tarefa falhe pela 3ª vez consecutiva, ela é retirada da fila principal e despachada para a fila de descarte:
+   - **Chave Redis:** `tarefas:dead_letter`
+   - **Registro gravado:** JSON contendo a tarefa, a mensagem do erro e o timestamp do incidente.
+   - **Status para o cliente:** Atualizado para `"erro"` com os detalhes da falha.
+
+### Inspeção no Redis:
+Para inspecionar a fila de descarte diretamente no container Redis:
+```bash
+# Quantidade de mensagens na dead-letter:
+docker exec -it sd-2026-2-kit-c1a2-redis-1 redis-cli LLEN tarefas:dead_letter
+
+# Visualizar as mensagens descartadas:
+docker exec -it sd-2026-2-kit-c1a2-redis-1 redis-cli LRANGE tarefas:dead_letter 0 -1
+```
+
+---
+
+## 8. Observabilidade e Logs Estruturados — [Tarefa 6]
+
+Todos os serviços utilizam o módulo padrão `logging` do Python com formato consistente:
+```text
+YYYY-MM-DD HH:MM:SS [NÍVEL] [COMPONENTE] Mensagem estruturada
+```
+
+Exemplos de logs produzidos em execução:
+- **API REST (`rest`):**
+  ```text
+  2026-09-19 21:15:20 [INFO] [rest] POST /predict id=e7b1a234... tamanho=42 tempo_ms=0.58
+  2026-09-19 21:15:20 [INFO] [rest] POST /predict status=202 tempo_ms=0.85
+  2026-09-19 21:15:21 [INFO] [rest] GET /resultado/e7b1a234... status=pronto tempo_ms=0.41
+  ```
+- **Worker (`worker`):**
+  ```text
+  2026-09-19 21:15:20 [INFO] [worker] processando e7b1a234...
+  2026-09-19 21:15:20 [INFO] [worker] concluido e7b1a234... sentimento=positivo confianca=0.992 tempo_ms=1.21
+  2026-09-19 21:15:25 [WARNING] [worker] falha ao processar id-x (tentativa 1/3): Erro transitório. Reenfileirando...
+  2026-09-19 21:15:28 [ERROR] [worker] tarefa id-x atingiu o limite de 3 tentativas. Despachando para dead-letter: ...
+  ```
+- **Servidor gRPC (`grpc`):**
+  ```text
+  2026-09-19 21:15:20 [INFO] [grpc] Prever tamanho=42 sentimento=positivo tempo_ms=1.19
+  2026-09-19 21:15:20 [INFO] [grpc] PreverLote itens=3 tempo_ms=2.34
+  ```
+
+---
+
+## 9. Suíte de Testes Automatizados
+
+O repositório inclui testes unitários e de integração cobrindo 100% dos requisitos do edital:
+
+| Suíte de Teste | Arquivo | Foco da Validação |
+|---|---|---|
+| **Tarefa 1** | `tests/test_tarefa_1.py` | Submissão assíncrona HTTP 202, validação de payload e invariante de não-bloqueio |
+| **Tarefa 2** | `tests/test_tarefa_2.py` | Consulta de status (404 Not Found, 200 na fila, 200 pronto, 200 erro) |
+| **Tarefa 3** | `tests/test_tarefa_3.py` | Processamento pelo worker e persistência correta de metadados |
+| **Tarefa 4** | `tests/test_tarefa_4.py` | Métodos gRPC `Prever` e `PreverLote` + Paridade estrita gRPC vs REST |
+| **Tarefa 5** | `tests/test_tarefa_5.py` | Retentativas incrementais e envio para Dead-Letter Queue no Redis |
+| **Tarefa 6** | `tests/test_tarefa_6.py` | Emissão de logs estruturados em todos os nós do sistema |
+
+### Para rodar toda a suíte de testes:
+```bash
+python -m unittest discover -s tests
+```
+*Todos os 24 testes são executados em milissegundos sem depender de recursos externos.*
+
+---
+
+## 10. Estrutura do Repositório
 
 ```
 sd-2026-2-kit-c1a2/
 ├── app/
-│   ├── modelo.py           # PRONTO - modelo de sentimento offline
-│   ├── fila.py             # PRONTO - auxiliares de fila (Redis)
-│   ├── api_rest.py         # TAREFAS 1 e 2
-│   ├── worker.py           # TAREFAS 3 e 5
-│   └── servidor_grpc.py    # TAREFA 4
-├── proto/inferencia.proto  # contrato gRPC
-├── exemplos/cliente_rest.py
-├── scripts/gerar_stubs.*
-├── docker-compose.yml      # sobe o Redis
-└── TAREFAS.md              # <- comece por aqui
+│   ├── __init__.py
+│   ├── api_rest.py           # Interface REST (FastAPI) com rotas síncrona e assíncrona
+│   ├── fila.py               # Operações Redis (fila tarefas, dead-letter, resultados)
+│   ├── modelo.py             # Pipeline scikit-learn offline de análise de sentimento
+│   ├── servidor_grpc.py      # Servidor gRPC com RPCs Prever e PreverLote
+│   └── worker.py             # Consumidor de tarefas com retentativas e dead-letter
+├── proto/
+│   └── inferencia.proto      # Contrato Protocol Buffers do serviço gRPC
+├── scripts/
+│   ├── gerar_stubs.sh        # Script Bash para compilação com protoc
+│   └── gerar_stubs.ps1       # Script PowerShell para Windows
+├── exemplos/
+│   ├── cliente_rest.py       # Exemplo de cliente REST síncrono e assíncrono
+│   └── cliente_grpc.py       # Exemplo de cliente gRPC individual e em lote
+├── tests/
+│   ├── test_tarefa_1.py      # Testes da submissão assíncrona
+│   ├── test_tarefa_2.py      # Testes da consulta de resultado
+│   ├── test_tarefa_3.py      # Testes do worker e persistência
+│   ├── test_tarefa_4.py      # Testes de gRPC e paridade com REST
+│   ├── test_tarefa_5.py      # Testes de retentativas e dead-letter
+│   └── test_tarefa_6.py      # Testes de observabilidade e logs estruturados
+├── docker-compose.yml        # Configuração do broker Redis 7
+├── requirements.txt          # Dependências do projeto
+├── EDITAL.md                 # Edital formal do trabalho
+├── EBOOK.md                  # Livro-texto da disciplina de Sistemas Distribuídos
+├── TAREFAS.md                # Checklist de tarefas do projeto
+├── AGENTS.md                 # Manual de orientação para agentes de IA
+└── README.md                 # Documentação técnica de arquitetura e execução
 ```
-
----
-
-## O que você precisa fazer
-
-Abra o arquivo **`TAREFAS.md`**: ele lista o núcleo obrigatório item a item, indicando
-o arquivo e a aula de referência de cada um.
-
----
-
-## Como você será avaliado
-
-| Critério | Pontos |
-|---|---|
-| Arquitetura e decomposição em serviços | 1,5 |
-| Comunicação funcionando (REST / gRPC / mensageria) | 1,5 |
-| Resiliência e tratamento de falhas | 1,0 |
-| Execução reproduzível (README, container, deploy) | 1,0 |
-| **Sofisticação do modelo de IA** | **não pontua** |
-| **Total** | **5,0** |
-
-**Entrega:** no seu repositório do GitHub, **sem apresentação oral**. Grupos livres.
-
----
-
-## Aulas de referência
-
-- **Aula 4** — Do RPC ao gRPC (contrato `.proto` e stubs)
-- **Aula 5** — REST e OpenAPI com FastAPI
-- **Aula 6** — IA como serviço (carregar o modelo uma vez)
-- **Aula 8** — Mensageria: fila, worker e dead-letter
-
----
-
-## Dúvidas frequentes
-
-**Preciso saber machine learning?** Não. O modelo já está pronto e você só chama uma função.
-
-**E se eu não tiver internet no laboratório?** Tudo neste kit funciona offline. O modelo é
-treinado localmente e o cliente de LLM tem modo simulado.
-
-**Posso trocar a linguagem?** O kit é em Python porque é o ecossistema usado nas aulas.
-Se quiser usar outra linguagem, converse com o professor antes.
-
-**Posso usar IA para me ajudar a programar?** Sim. Este é um trabalho prático feito fora de
-sala, e usar ferramentas de IA é realista. O que se avalia é o **sistema funcionando** e as
-**decisões de arquitetura** — que você precisa saber explicar.
