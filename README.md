@@ -82,9 +82,14 @@ flowchart TD
 
 ## 3. Pré-requisitos
 
-- **Python:** 3.10 ou superior.
+- **Python:** Versão **3.10** recomendada (compatível com 3.10 a 3.12).
 - **Docker e Docker Compose:** Para execução do container Redis.
 - **Git:** Para clonagem e versionamento.
+
+> [!WARNING]
+> **Atenção — Versão Recomendada do Python (Python 3.10 a 3.12):**  
+> Recomendamos enfaticamente utilizar o **Python 3.10** (ou 3.11/3.12) na criação do ambiente virtual.  
+> O pacote `grpcio==1.66.1` (fixado no edital) não possui binários pré-compilados (*wheels* `.whl`) para **Python 3.13** no PyPI. Ao usar o Python 3.13, o `pip` força a compilação do gRPC a partir do código-fonte C++, resultando em falha de compilação no compilador C++ (`clang`/`gcc`) devido a símbolos privados da C-API do CPython que foram removidos no Python 3.13 (`undeclared identifier '_PyInterpreterState_GetConfig'`, `_PyDict_SetItem_KnownHash`, etc.). No **Python 3.10**, todas as bibliotecas possuem binários prontos e a instalação ocorre em segundos sem necessidade de compilação.
 
 ---
 
@@ -97,8 +102,9 @@ Siga os passos abaixo sequencialmente em terminais distintos:
 git clone https://github.com/feumpi/sd-2026-2-kit-c1a2.git
 cd sd-2026-2-kit-c1a2
 
-# Criação do ambiente virtual
-python3 -m venv .venv
+# Criação do ambiente virtual com Python 3.10 (recomendado):
+python3.10 -m venv .venv
+# (ou python3 -m venv .venv, caso seu interpretador padrão seja 3.10, 3.11 ou 3.12)
 
 # Ativação do ambiente:
 # No Linux/macOS:
