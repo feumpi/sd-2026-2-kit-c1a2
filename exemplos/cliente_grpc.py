@@ -2,7 +2,12 @@
 Cliente gRPC de exemplo para chamadas síncronas individual e em lote.
 Rode com o servidor gRPC no ar: python -m app.servidor_grpc
 """
+import os
 import sys
+
+# Garante que a raiz do projeto esteja no sys.path para carregar os stubs
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 import grpc
 
 try:
