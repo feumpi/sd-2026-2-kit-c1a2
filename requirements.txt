@@ -7,3 +7,4 @@ redis==5.0.8
 requests==2.32.3
 grpcio==1.66.1
 grpcio-tools==1.66.1
+httpx==0.28.1
