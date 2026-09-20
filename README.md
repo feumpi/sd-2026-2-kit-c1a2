@@ -107,6 +107,10 @@ source .venv/bin/activate
 # .venv\Scripts\activate
 ```
 
+> [!TIP]
+> A ativação do ambiente virtual afeta **apenas a sessão do terminal atual**. Como este projeto distribuído requer múltiplos processos rodando em paralelo, lembre-se de que **cada novo terminal aberto precisará ter o `.venv` ativado**.
+
+
 ### Passo 2: Instalar as Dependências
 ```bash
 pip install -r requirements.txt
@@ -129,22 +133,39 @@ python -m grpc_tools.protoc -I proto --python_out=. --grpc_python_out=. proto/in
 
 ### Passo 5: Iniciar os Serviços
 
-Abra terminais com o ambiente virtual ativado (`source .venv/bin/activate`):
+> [!IMPORTANT]
+> **Ativação Obrigatória do Ambiente Virtual (`.venv`) em Cada Novo Terminal:**  
+> Como a arquitetura distribuída exige a execução concorrente de múltiplos processos em terminais separados, **cada nova janela ou aba aberta inicia no ambiente global do seu sistema**.  
+> Se você tentar rodar qualquer comando sem ativar o ambiente virtual previamente, o interpretador global não encontrará os pacotes instalados e falhará com erros como:
+> ```text
+> ModuleNotFoundError: No module named 'redis'
+> ModuleNotFoundError: No module named 'fastapi'
+> ```
+> **Sempre execute o comando de ativação no novo terminal antes de iniciar o serviço:**
+> - **Linux / macOS:** `source .venv/bin/activate`
+> - **Windows (PowerShell):** `.venv\Scripts\Activate.ps1`
+> - **Windows (CMD):** `.venv\Scripts\activate.bat`
+> *(Confirme que o prefixo `(.venv)` aparece antes do prompt do shell).*
+
+Abra 3 terminais separados na raiz do projeto e execute os serviços correspondentes:
 
 - **Terminal 1 — API REST (FastAPI):**
   ```bash
+  source .venv/bin/activate
   uvicorn app.api_rest:app --port 8000 --reload
   ```
   *Swagger UI interativo disponível em: [http://localhost:8000/docs](http://localhost:8000/docs)*
 
 - **Terminal 2 — Worker de Processamento Assíncrono:**
   ```bash
+  source .venv/bin/activate
   python -m app.worker
   ```
-  *(Opcional: Abra um segundo terminal e execute o mesmo comando para subir múltiplos workers e observar a divisão de carga).*
+  *(Opcional: Abra um quarto terminal, ative o `.venv` e execute o mesmo comando para subir múltiplos workers e observar a divisão de carga).*
 
 - **Terminal 3 — Servidor gRPC:**
   ```bash
+  source .venv/bin/activate
   python -m app.servidor_grpc
   ```
   *Servidor gRPC ativo escutando na porta `50051`.*
@@ -281,8 +302,9 @@ Abra terminais com o ambiente virtual ativado (`source .venv/bin/activate`):
 ---
 
 ### 5.5. Execução do Script de Teste REST
-O repositório inclui um script demonstrativo que executa chamadas síncronas e assíncronas em sequência:
+O repositório inclui um script demonstrativo que executa chamadas síncronas e assíncronas em sequência (em um novo terminal com o `.venv` ativado):
 ```bash
+source .venv/bin/activate
 python exemplos/cliente_rest.py "o atendimento foi excelente e muito rapido"
 ```
 
@@ -301,8 +323,9 @@ O serviço gRPC opera sob o contrato definido em [`proto/inferencia.proto`](prot
    - **Saída (`RespostaLote`):** `repeated RespostaPrever resultados = 1;`
 
 ### 6.2. Testando com o Cliente gRPC Demonstrativo
-Com o servidor gRPC em execução, execute:
+Com o servidor gRPC em execução (em um novo terminal com o `.venv` ativado):
 ```bash
+source .venv/bin/activate
 python exemplos/cliente_grpc.py
 ```
 **Saída Esperada:**
@@ -384,6 +407,7 @@ O repositório inclui testes unitários e de integração cobrindo 100% dos requ
 
 ### Para rodar toda a suíte de testes:
 ```bash
+source .venv/bin/activate
 python -m unittest discover -s tests
 ```
 *Todos os 24 testes são executados em milissegundos sem depender de recursos externos.*
