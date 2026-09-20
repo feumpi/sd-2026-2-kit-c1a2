@@ -80,8 +80,22 @@ flowchart TD
 
 ---
 
-## 3. Pré-requisitos
+## 3. Ambiente de Desenvolvimento e Pré-requisitos
 
+### 3.1. Ambiente Homologado de Desenvolvimento e Testes
+O projeto foi integralmente desenvolvido, testado e validado nas seguintes condições de ambiente:
+
+| Componente / Recurso | Versão / Especificação | Detalhes Técnicos |
+|:---|:---|:---|
+| **Sistema Operacional** | macOS Sequoia (versão 26.6.2) | Kernel Darwin, arquitetura ARM64 (Apple Silicon) |
+| **Interpretador Python** | Python 3.10.18 | Gerenciado via `pyenv` (compatível com Python 3.10 a 3.12) |
+| **Ambiente Virtual** | `venv` (módulo nativo) | Criado via `python3.10 -m venv .venv` |
+| **Container Engine** | Docker Desktop v29.8.0 | Docker daemon ativo via socket Unix local |
+| **Orquestrador de Containers** | Docker Compose v5.5.1 | Gerenciador declarativo de serviços (`docker-compose.yml`) |
+| **Message Broker** | Redis 7.2 (`redis:7-alpine`) | Porta `6379:6379`, persistência temporária e healthcheck |
+| **Compilador gRPC / Protoc** | `grpcio-tools==1.66.1` | Compilação do contrato `proto/inferencia.proto` |
+
+### 3.2. Pré-requisitos Mínimos
 - **Python:** Versão **3.10** recomendada (compatível com 3.10 a 3.12).
 - **Docker e Docker Compose:** Para execução do container Redis.
 - **Git:** Para clonagem e versionamento.
