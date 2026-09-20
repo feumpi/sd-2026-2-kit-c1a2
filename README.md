@@ -94,7 +94,7 @@ Siga os passos abaixo sequencialmente em terminais distintos:
 
 ### Passo 1: Clonar o Repositório e Criar o Ambiente Virtual
 ```bash
-git clone https://github.com/howardroatti/sd-2026-2-kit-c1a2.git
+git clone https://github.com/feumpi/sd-2026-2-kit-c1a2.git
 cd sd-2026-2-kit-c1a2
 
 # Criação do ambiente virtual
