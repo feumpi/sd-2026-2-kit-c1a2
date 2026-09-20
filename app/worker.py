@@ -9,10 +9,18 @@ O QUE VOCE PRECISA FAZER (TAREFAS.md, itens 3 e 5):
 Rodar:  python -m app.worker
 Suba mais de um worker em terminais diferentes e veja a carga se dividir.
 """
+import logging
 import time
 
 from app import fila
 from app.modelo import carregar_modelo
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    level=logging.INFO,
+)
+logger = logging.getLogger("worker")
 
 
 def processar_tarefa(tarefa: dict, modelo) -> dict:
@@ -23,8 +31,8 @@ def processar_tarefa(tarefa: dict, modelo) -> dict:
     resultado["tempo_ms"] = round((time.time() - inicio) * 1000, 2)
 
     fila.guardar_resultado(tarefa["id"], resultado)
-    print(
-        f"[worker] concluido {tarefa['id']} sentimento={resultado['sentimento']} "
+    logger.info(
+        f"concluido {tarefa['id']} sentimento={resultado['sentimento']} "
         f"confianca={resultado['confianca']} tempo_ms={resultado['tempo_ms']}"
     )
     return resultado
@@ -36,30 +44,30 @@ def tratar_falha(tarefa: dict, erro: Exception) -> None:
 
     if tentativa_atual < fila.MAX_TENTATIVAS:
         tarefa["tentativas"] = tentativa_atual + 1
-        print(
-            f"[worker] AVISO: falha ao processar {tarefa.get('id')} "
+        logger.warning(
+            f"falha ao processar {tarefa.get('id')} "
             f"(tentativa {tentativa_atual}/{fila.MAX_TENTATIVAS}): {erro}. Reenfileirando..."
         )
         fila.reenfileirar(tarefa)
     else:
-        print(
-            f"[worker] ERRO CRÍTICO: tarefa {tarefa.get('id')} atingiu o limite de "
+        logger.error(
+            f"tarefa {tarefa.get('id')} atingiu o limite de "
             f"{fila.MAX_TENTATIVAS} tentativas. Despachando para dead-letter: {erro}"
         )
         fila.enfileirar_dead_letter(tarefa, str(erro))
 
 
 def main():
-    print("[worker] carregando modelo...")
+    logger.info("carregando modelo...")
     modelo = carregar_modelo()
-    print("[worker] pronto. aguardando tarefas (Ctrl+C para sair)")
+    logger.info("pronto. aguardando tarefas (Ctrl+C para sair)")
 
     while True:
         tarefa = fila.proxima_tarefa(timeout=5)
         if tarefa is None:
             continue
 
-        print(f"[worker] processando {tarefa['id']}")
+        logger.info(f"processando {tarefa['id']}")
         try:
             processar_tarefa(tarefa, modelo)
         except Exception as erro:  # noqa: BLE001

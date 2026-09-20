@@ -8,12 +8,20 @@ O QUE VOCE PRECISA FAZER (TAREFAS.md, item 4): o metodo PreverLote.
 
 Rodar:  python -m app.servidor_grpc
 """
+import logging
 import time
 from concurrent import futures
 
 import grpc
 
 from app.modelo import carregar_modelo
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    level=logging.INFO,
+)
+logger = logging.getLogger("grpc")
 
 try:
     import inferencia_pb2
@@ -29,15 +37,15 @@ except ImportError:  # pragma: no cover
 class ServicoInferencia(inferencia_pb2_grpc.InferenciaServicer):
 
     def __init__(self):
-        print("[grpc] carregando modelo...")
+        logger.info("carregando modelo...")
         self.modelo = carregar_modelo()
-        print("[grpc] modelo pronto")
+        logger.info("modelo pronto")
 
     def Prever(self, request, context):
         inicio = time.time()
         r = self.modelo.prever(request.texto)
         tempo_ms = round((time.time() - inicio) * 1000, 2)
-        print(f"[grpc] Prever tamanho={len(request.texto)} sentimento={r['sentimento']} tempo_ms={tempo_ms}")
+        logger.info(f"Prever tamanho={len(request.texto)} sentimento={r['sentimento']} tempo_ms={tempo_ms}")
         return inferencia_pb2.RespostaPrever(
             texto=r["texto"], sentimento=r["sentimento"], confianca=r["confianca"]
         )
@@ -56,7 +64,7 @@ class ServicoInferencia(inferencia_pb2_grpc.InferenciaServicer):
                 )
             )
         tempo_ms = round((time.time() - inicio) * 1000, 2)
-        print(f"[grpc] PreverLote itens={len(request.textos)} tempo_ms={tempo_ms}")
+        logger.info(f"PreverLote itens={len(request.textos)} tempo_ms={tempo_ms}")
         return inferencia_pb2.RespostaLote(resultados=respostas)
 
 
@@ -66,7 +74,7 @@ def servir(porta: int = 50051):
         ServicoInferencia(), servidor)
     servidor.add_insecure_port(f"[::]:{porta}")
     servidor.start()
-    print(f"[grpc] escutando na porta {porta}")
+    logger.info(f"escutando na porta {porta}")
     servidor.wait_for_termination()
 
 
