@@ -15,6 +15,21 @@ from app import fila
 from app.modelo import carregar_modelo
 
 
+def processar_tarefa(tarefa: dict, modelo) -> dict:
+    """Executa a inferência de uma tarefa e persiste o resultado pronto no Redis."""
+    inicio = time.time()
+    resultado = modelo.prever(tarefa["texto"])
+    resultado["status"] = "pronto"
+    resultado["tempo_ms"] = round((time.time() - inicio) * 1000, 2)
+
+    fila.guardar_resultado(tarefa["id"], resultado)
+    print(
+        f"[worker] concluido {tarefa['id']} sentimento={resultado['sentimento']} "
+        f"confianca={resultado['confianca']} tempo_ms={resultado['tempo_ms']}"
+    )
+    return resultado
+
+
 def main():
     print("[worker] carregando modelo...")
     modelo = carregar_modelo()
@@ -26,18 +41,8 @@ def main():
             continue
 
         print(f"[worker] processando {tarefa['id']}")
-        inicio = time.time()
         try:
-            resultado = modelo.prever(tarefa["texto"])
-            resultado["status"] = "pronto"
-            resultado["tempo_ms"] = round((time.time() - inicio) * 1000, 2)
-
-            # TAREFA 3: guarde o resultado para o cliente consultar depois.
-            # DICA: fila.guardar_resultado(tarefa["id"], resultado)
-            raise NotImplementedError("guarde o resultado na TAREFA 3")
-
-        except NotImplementedError:
-            raise
+            processar_tarefa(tarefa, modelo)
         except Exception as erro:  # noqa: BLE001
             # TAREFA 5: retentativa + dead-letter em vez de so registrar.
             print(f"[worker] ERRO em {tarefa['id']}: {erro}")
